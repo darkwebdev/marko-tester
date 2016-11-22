@@ -38,7 +38,9 @@ module.exports = {
         withLint: process.argv.indexOf('--no-lint') === -1,
         withMocha: process.argv.indexOf('--with-acceptance') === -1 && process.argv.indexOf('--no-mocha') === -1,
         withAcceptance: process.argv.indexOf('--with-acceptance') > -1,
-        config: markoTesterConfig
+        config: markoTesterConfig,
+        coverage: {},
+        coverageBrowser: {}
       };
     }
 

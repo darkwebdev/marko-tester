@@ -1,5 +1,3 @@
-/* eslint no-underscore-dangle: 0 */
-
 'use strict';
 
 var fs = require('fs-extra');
@@ -8,99 +6,107 @@ var glob = require('glob');
 var istanbul = require('istanbul');
 var utils = require('../utils');
 var packageInfo = require(utils.getHelpers().rootPath + '/package');
+var collector = new istanbul.Collector();
 var instrumenter = new istanbul.Instrumenter({
   noCompact: true
 });
+var coverageFiles = [];
 
 function preparePathForIgnore(prependPath, ignoredPath) {
   return path.resolve(prependPath, ignoredPath, '**');
 }
 
-function initialize() {
-  global.__coverage__ = {};
-  global.__coverage__browser = {};
-
+function gatherCoverageFilesFromSource(sourcePath) {
   var config = utils.getHelpers().config.coverage;
-  var sourcePaths = utils.getSourcePaths();
-  var coverageFiles = [];
-
-  sourcePaths.forEach(function gatherCoverageFilesFromSource(sourcePath) {
-    coverageFiles = coverageFiles.concat(glob.sync(path.resolve(utils.getHelpers().rootPath, sourcePath, '**/*.js'), {
-      ignore: config.excludes.map(preparePathForIgnore.bind(this, utils.getHelpers().rootPath))
-    }));
+  var files = glob.sync(path.resolve(utils.getHelpers().rootPath, sourcePath, '**/*.js'), {
+    ignore: config.excludes.map(preparePathForIgnore.bind(this, utils.getHelpers().rootPath))
   });
 
-  coverageFiles.forEach(function instrumentFile(filePath) {
-    var fileContent = fs.readFileSync(filePath, 'utf8');
+  coverageFiles.push.apply(coverageFiles, files);
+}
 
-    instrumenter.instrumentSync(fileContent, filePath);
+function instrumentFile(filePath) {
+  var fileContent = fs.readFileSync(filePath, 'utf8');
+  var data = {};
 
-    global.__coverage__[filePath] = instrumenter.lastFileCoverage();
-  });
+  instrumenter.instrumentSync(fileContent, filePath);
 
-  istanbul.hook.hookRequire(
-    function checkRequiredName(requirePath) {
-      return coverageFiles.indexOf(requirePath) > -1;
-    },
+  data[filePath] = instrumenter.lastFileCoverage();
 
-    function replaceRequiredContent(code, requirePath) {
-      var instrumentedfileContent = instrumenter.instrumentSync(code, requirePath);
+  utils.setHelpers('coverage', data);
+}
 
-      return instrumentedfileContent;
-    }
-  );
+function checkRequiredName(requirePath) {
+  return coverageFiles.indexOf(requirePath) > -1;
+}
 
-  process.on('exit', function createCoverage() {
-    var reporters = config.reporters || 'text-summary';
-    var dest = config.dest || '.coverage';
-    var collector = new istanbul.Collector();
+function replaceRequiredContent(code, requirePath) {
+  return instrumenter.instrumentSync(code, requirePath);
+}
 
-    collector.add(global.__coverage__);
-    collector.add(global.__coverage__browser);
+function createReport(reporter) {
+  var config = utils.getHelpers().config.coverage;
+  var dest = config.dest;
 
-    reporters.forEach(function createReport(reporter) {
-      istanbul.Report.create(reporter, {
-        dir: dest + '/' + reporter
-      }).writeReport(collector, true);
-    });
-  });
+  istanbul.Report.create(reporter, {
+    dir: dest + '/' + reporter
+  }).writeReport(collector, true);
+}
+
+function createCoverage() {
+  var config = utils.getHelpers().config.coverage;
+
+  collector.add(utils.getHelpers().coverage);
+  collector.add(utils.getHelpers().coverageBrowser);
+
+  config.reporters.forEach(createReport);
+}
+
+function initialize() {
+  /* eslint no-underscore-dangle: 0 */
+
+  global.__coverage__ = utils.getHelpers().coverage;
+
+  utils.getSourcePaths().forEach(gatherCoverageFilesFromSource);
+  coverageFiles.forEach(instrumentFile);
+  istanbul.hook.hookRequire(checkRequiredName, replaceRequiredContent);
+
+  process.on('exit', createCoverage);
+}
+
+function instrumentBrowserFile(sourcePath, generatedSrcPath, filePath) {
+  var fileContent = fs.readFileSync(filePath, 'utf8');
+  var coveragePath = path.resolve(utils.getHelpers().rootPath, sourcePath);
+  var realPath = filePath.replace(generatedSrcPath, coveragePath);
+  var moduleBody = fileContent;
+
+  if (fileContent.substring(0, 10) === '$_mod.def(') {
+    var startIndex = fileContent.indexOf('{') + 1;
+    var endIndex = fileContent.lastIndexOf('}');
+
+    moduleBody = fileContent.substring(startIndex, endIndex);
+  }
+
+  var instrumentedModuleBody = instrumenter.instrumentSync(moduleBody, realPath);
+
+  fileContent = fileContent.replace(moduleBody, instrumentedModuleBody);
+
+  fs.writeFileSync(filePath, fileContent, 'utf8');
+}
+
+function gatherBrowserCoverageFilesFromSource(sourcePath) {
+  var bundleBasePath = path.resolve(utils.getHelpers().outputPath, 'source');
+  var config = utils.getHelpers().config.coverage;
+  var bundlePath = path.resolve(bundleBasePath, packageInfo.name + '$' + packageInfo.version);
+  var generatedSrcPath = path.resolve(bundlePath, sourcePath);
+
+  glob.sync(path.resolve(generatedSrcPath, '**/*.js'), {
+    ignore: config.excludes.map(preparePathForIgnore.bind(this, bundlePath))
+  }).forEach(instrumentBrowserFile.bind(this, sourcePath, generatedSrcPath));
 }
 
 function initializeBrowser() {
-  var bundleBasePath = path.resolve(utils.getHelpers().outputPath, 'source');
-  var bundlePath = path.resolve(bundleBasePath, packageInfo.name + '$' + packageInfo.version);
-  var config = utils.getHelpers().config.coverage;
-  var sourcePaths = utils.getSourcePaths();
-
-  sourcePaths.forEach(function gatherCoverageFilesFromSource(sourcePath) {
-    var generatedSrcPath = path.resolve(bundlePath, sourcePath);
-
-    var files = glob.sync(path.resolve(generatedSrcPath, '**/*.js'), {
-      ignore: config.excludes.map(preparePathForIgnore.bind(this, bundlePath))
-    });
-
-    function instrumentFile(filePath) {
-      var fileContent = fs.readFileSync(filePath, 'utf8');
-      var coveragePath = path.resolve(utils.getHelpers().rootPath, sourcePath);
-      var realPath = filePath.replace(generatedSrcPath, coveragePath);
-      var moduleBody = fileContent;
-
-      if (fileContent.substring(0, 10) === '$_mod.def(') {
-        var startIndex = fileContent.indexOf('{') + 1;
-        var endIndex = fileContent.lastIndexOf('}');
-
-        moduleBody = fileContent.substring(startIndex, endIndex);
-      }
-
-      var instrumentedModuleBody = instrumenter.instrumentSync(moduleBody, realPath);
-
-      fileContent = fileContent.replace(moduleBody, instrumentedModuleBody);
-
-      fs.writeFileSync(filePath, fileContent, 'utf8');
-    }
-
-    files.forEach(instrumentFile);
-  });
+  utils.getSourcePaths().forEach(gatherBrowserCoverageFilesFromSource);
 }
 
 module.exports.initialize = initialize;

@@ -13,47 +13,57 @@ var mocha = new Mocha({
   ignoreLeaks: false,
   globals: ['document', 'window', 'GLOBAL_LASSO']
 });
+var timeout;
 
-function testAcceptance() {
+function addPathToMocha(testFile) {
+  mocha.addFile(testFile);
+}
+
+function searchPathForTests(sourcePath) {
+  var testFiles = glob.sync(path.resolve(utils.getHelpers().rootPath, sourcePath, '**/*acceptance.js'));
+
+  testFiles.forEach(addPathToMocha);
+}
+
+function startMocha() {
+  mocha.run(function exitMarkoTester(failures) {
+    process.exit(failures);
+  });
+}
+
+function clearTimeout() {
+  if (timeout) {
+    clearTimeout(timeout);
+  }
+}
+
+function startApp(startCommand) {
   /* eslint no-console: 0 */
 
-  var sourcePaths = utils.getSourcePaths();
+  console.log('\n\nStarting your app using `' + startCommand + '` command.\n\n');
+
+  exec(startCommand);
+}
+
+function stopApp(stopCommand) {
+  /* eslint no-console: 0 */
+
+  console.log('\n\nShutting down your app using `' + stopCommand + '` command.\n\n');
+
+  exec(stopCommand);
+}
+
+function testAcceptance() {
   var configuration = utils.loadConfiguration();
-  var timeout;
 
-  function searchPathForTests(sourcePath) {
-    var testFiles = glob.sync(path.resolve(utils.getHelpers().rootPath, sourcePath, '**/*acceptance.js'));
+  utils.getSourcePaths().forEach(searchPathForTests);
 
-    testFiles.forEach(function addPathToMocha(testFile) {
-      mocha.addFile(testFile);
-    });
-  }
+  startApp(configuration.acceptance.startCommand);
 
-  sourcePaths.forEach(searchPathForTests);
+  timeout = setTimeout(startMocha, configuration.acceptance.startTimeout);
 
-  console.log('\n\nStarting your app using `' + configuration.acceptance.startCommand + '` command.\n\n');
-
-  exec(configuration.acceptance.startCommand);
-
-  timeout = setTimeout(function startMocha() {
-    mocha.run(function exitMarkoTester(failures) {
-      process.exit(failures);
-    });
-  }, configuration.acceptance.startTimeout);
-
-  process.on('SIGINT', function exitAcceptance() {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  });
-
-  process.on('exit', function stopApp() {
-    var stopCommand = configuration.acceptance.stopCommand;
-
-    console.log('\n\nShutting down your app using `' + stopCommand + '` command.\n\n');
-
-    exec(stopCommand);
-  });
+  process.on('SIGINT', clearTimeout);
+  process.on('exit', stopApp.bind(this, configuration.acceptance.stopCommand));
 }
 
 module.exports = testAcceptance;

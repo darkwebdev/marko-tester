@@ -158,9 +158,8 @@ function buildComponent(context, opts, cb) {
 
     after(function buildComponentAfter() {
       /* eslint no-underscore-dangle: 0 */
-      if (global.__coverage__browser) {
-        Object.assign(global.__coverage__browser, global.window.__coverage__);
-      }
+
+      utils.setHelpers('coverageBrowser', global.window.__coverage__);
 
       delete global.window;
       delete global.document;

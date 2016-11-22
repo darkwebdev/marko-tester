@@ -27,41 +27,62 @@ function cleanRenderedHtml(html) {
   return (html ? normalizer().domString(html.trim()) : '');
 }
 
+function parseComponentRenderedHtml(resolve, reject, error, result) {
+  if (error) {
+    return reject('TestFixtures: Failed to render component html.');
+  }
+
+  var html = result;
+
+  if (_.isObject(result)) {
+    html = result.html;
+  }
+
+  return resolve(cleanRenderedHtml(html));
+}
+
+function promiseRenderedHtml(renderer, fixture, resolve, reject) {
+  var callback = parseComponentRenderedHtml.bind(null, resolve, reject);
+
+  callback.global = {};
+
+  renderer(fixture, callback);
+}
+
 function renderHtml(renderer, fixture) {
-  return new Promise(function promiseRenderedHtml(resolve, reject) {
-    var callback = function parseComponentRenderedHtml(error, result) {
-      if (error) {
-        return reject('TestFixtures: Failed to render component html.');
-      }
+  return new Promise(promiseRenderedHtml.bind(null, renderer, fixture));
+}
 
-      var html = result;
+function onFailedComponentRender(error) {
+  throw new Error(error);
+}
 
-      if (_.isObject(result)) {
-        html = result.html;
-      }
+function compareRenderedHtml(context, testCase) {
+  var actualHtml = renderHtml(context.renderer, testCase.fixture).catch(onFailedComponentRender);
+  var expectedHtml = cleanRenderedHtml(testCase.expectedHtml);
 
-      return resolve(cleanRenderedHtml(html));
-    };
-
-    callback.global = {};
-    renderer(fixture, callback);
-  });
+  return expect(actualHtml).to.eventually.equal(expectedHtml);
 }
 
 function createTest(context, testCase) {
-  it('should render component using ' + testCase.name + ' input', function compareRenderedHtml() {
-    var actualHtml = renderHtml(context.renderer, testCase.fixture)
-      .catch(function onFailedComponentRender(error) {
-        throw new Error(error);
-      });
-    var expectedHtml = cleanRenderedHtml(testCase.expectedHtml);
+  it('should render component using ' + testCase.name + ' input', compareRenderedHtml.bind(null, context, testCase));
+}
 
-    return expect(actualHtml).to.eventually.equal(expectedHtml);
+function createTestCases(testCases, fixture) {
+  testCases.push({
+    name: fixture.testName,
+    fixture: fixture.data,
+    expectedHtml: fixture.expectedHtml
   });
+}
+
+function givenSpecificInputData(context, testCases) {
+  testCases.forEach(createTest.bind(null, context));
 }
 
 function testFixtures(context, opts) {
   var options = opts || {};
+  var testCases = [];
 
   if (!context.renderer) {
     Object.assign(context, {
@@ -73,25 +94,13 @@ function testFixtures(context, opts) {
     throw new Error('TestFixtures: Cannot automatically locate renderer, please specify one.');
   }
 
-  var testCases = [];
-
-  var fixtures = utils.getFixtures(context);
-
-  fixtures.forEach(function createTestCases(fixture) {
-    testCases.push({
-      name: fixture.testName,
-      fixture: fixture.data,
-      expectedHtml: fixture.expectedHtml
-    });
-  });
+  utils.getFixtures(context).forEach(createTestCases.bind(null, testCases));
 
   if (context.options.fixturesPath && !testCases.length) {
     throw new Error('TestFixtures: No fixtures found in specified location');
   }
 
-  options.mochaOperation('Given specific input data', function givenSpecificInputData() {
-    testCases.forEach(createTest.bind(null, context));
-  });
+  options.mochaOperation('Given specific input data', givenSpecificInputData.bind(null, context, testCases));
 }
 
 module.exports = utils.runWithMochaOperation.bind(null, null, testFixtures);
